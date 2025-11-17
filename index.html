@@ -1,3 +1,425 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard Sensor Proximity</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Chart.js (untuk line chart saja) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- MQTT.js (browser bundle) -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      height: 100%;
+      overflow: hidden;          /* fullscreen tanpa scroll */
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+    }
+
+    /* SIDEBAR */
+    #sidebar {
+      position: fixed;
+      top: 0;
+      left: -220px;
+      width: 220px;
+      height: 100%;
+      background: #111827;
+      color: #fff;
+      transition: left .3s ease;
+      padding-top: 60px;
+      z-index: 20;
+    }
+    #sidebar.active {
+      left: 0;
+    }
+    #sidebar h2 {
+      text-align: center;
+      font-size: 18px;
+      margin: 0 0 20px 0;
+    }
+    #sidebar ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    #sidebar ul li {
+      margin: 8px 0;
+      text-align: center;
+    }
+    #sidebar ul li a {
+      display: block;
+      padding: 10px 0;
+      color: #e5e7eb;
+      text-decoration: none;
+      font-size: 15px;
+    }
+    #sidebar ul li a:hover {
+      background: #1f2933;
+    }
+
+    /* HAMBURGER BUTTON */
+    #menu-btn {
+      position: fixed;
+      top: 12px;
+      left: 16px;
+      font-size: 28px;
+      cursor: pointer;
+      color: #111827;
+      z-index: 30;
+      user-select: none;
+    }
+
+    /* DASHBOARD */
+    #dashboard {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 20px 20px 20px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 8px;
+      margin-bottom: 8px;
+    }
+    .header-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.06);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    #gauge-wrapper {
+      flex: 4;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 0;
+    }
+    #chart-wrapper {
+      flex: 5;
+      min-height: 0;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #6b7280;
+      padding: 0 4px 4px;
+    }
+
+    @media (max-width: 900px) {
+      #dashboard {
+        padding: 10px;
+      }
+    }
+
+    /* === GAUGE CSS (dari contohmu, disesuaikan) === */
+    .gauge-container {
+      position: relative;
+      width: 260px;
+      height: 260px;
+      max-width: 100%;
+    }
+
+    .gauge-background {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background-color: #e0e0e0;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .gauge-arc {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      /* hanya setengah lingkaran atas seperti speedtest */
+      clip-path: polygon(50% 50%, 0% 0%, 100% 0%);
+      background: conic-gradient(
+        #4CAF50 0%,
+        #8BC34A 20%,
+        #CDDC39 40%,
+        #FFEB3B 60%,
+        #FFC107 80%,
+        #FF5722 100%
+      );
+      transform: rotate(-135deg);
+      transition: transform 0.8s ease-in-out;
+    }
+
+    .gauge-center {
+      position: absolute;
+      width: 80%;
+      height: 80%;
+      top: 10%;
+      left: 10%;
+      border-radius: 50%;
+      background-color: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .gauge-value {
+      font-size: 2.4rem;
+      font-weight: bold;
+      color: #333;
+    }
+
+    .gauge-label {
+      font-size: 1rem;
+      color: #666;
+      margin-top: 4px;
+    }
+
+    .gauge-needle {
+      position: absolute;
+      width: 6px;
+      height: 45%;
+      background-color: #333;
+      bottom: 50%;
+      left: 50%;
+      transform-origin: bottom center;
+      transform: translateX(-50%) rotate(-135deg);
+      transition: transform 0.8s ease-in-out;
+      z-index: 10;
+      border-radius: 3px 3px 0 0;
+    }
+
+    .gauge-needle::after {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      background-color: #333;
+      border-radius: 50%;
+      top: -9px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .gauge-marks {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+    }
+
+    .gauge-mark {
+      position: absolute;
+      width: 2px;
+      height: 14px;
+      background-color: #666;
+      top: 0;
+      left: 50%;
+      transform-origin: bottom center;
+    }
+
+    .gauge-mark-label {
+      position: absolute;
+      font-size: 0.75rem;
+      color: #666;
+      transform-origin: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <h2>Menu</h2>
+    <ul>
+      <li><a href="#dashboard">Sensor 1</a></li>
+      <!-- Ganti YOUR_SPREADSHEET_ID dengan ID Spreadsheet Anda -->
+      <li>
+        <a href="https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID/export?format=xlsx" target="_blank">
+          Unduh Excel
+        </a>
+      </li>
+    </ul>
+  </div>
+
+  <!-- HAMBURGER -->
+  <div id="menu-btn">&#9776;</div>
+
+  <!-- DASHBOARD -->
+  <div id="dashboard">
+    <div class="header">
+      <div class="header-title">Dashboard Sensor Proximity (M/min)</div>
+    </div>
+
+    <div class="content" id="sensor1">
+      <!-- GAUGE -->
+      <div class="card" style="flex: 4;">
+        <div class="status-bar">
+          <span>Sensor 1 - Kecepatan</span>
+          <span id="mqtt-status">MQTT: Disconnected</span>
+        </div>
+        <div id="gauge-wrapper">
+          <!-- Gauge versi CSS seperti contohmu -->
+          <div class="gauge-container">
+            <div class="gauge-background"></div>
+            <div class="gauge-arc" id="gaugeArc"></div>
+            <div class="gauge-center">
+              <div class="gauge-value" id="gaugeValue">0</div>
+              <div class="gauge-label">M/min</div>
+            </div>
+            <div class="gauge-needle" id="gaugeNeedle"></div>
+            <div class="gauge-marks" id="gaugeMarks"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LINE CHART -->
+      <div class="card" style="flex: 5;">
+        <div class="status-bar">
+          <span>Riwayat Kecepatan</span>
+          <span>Max 250 M/min</span>
+        </div>
+        <div id="chart-wrapper">
+          <canvas id="lineChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /*********** SIDEBAR TOGGLE ***********/
+    const sidebar = document.getElementById('sidebar');
+    const menuBtn = document.getElementById('menu-btn');
+
+    menuBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('active');
+    });
+
+    sidebar.addEventListener('click', (e) => {
+      if (e.target.tagName === 'A') {
+        sidebar.classList.remove('active');
+      }
+    });
+
+    /*********** KONFIGURASI GAUGE (CSS, TANPA Chart.js) ***********/
+    const MAX_SPEED = 250;
+
+    const gaugeValueEl  = document.getElementById('gaugeValue');
+    const gaugeNeedleEl = document.getElementById('gaugeNeedle');
+    const gaugeArcEl    = document.getElementById('gaugeArc');
+    const gaugeMarksEl  = document.getElementById('gaugeMarks');
+
+    createGaugeMarks();
+    updateGauge(0);   // nilai awal
+
+    // buat tanda & label 0, 50, 100, 150, 200, 250
+    function createGaugeMarks() {
+      const totalMarks = 6;
+      const step = MAX_SPEED / (totalMarks - 1);
+
+      for (let i = 0; i < totalMarks; i++) {
+        const value = step * i;
+        const angle = -135 + (value / MAX_SPEED) * 270;
+
+        // garis tick
+        const mark = document.createElement('div');
+        mark.className = 'gauge-mark';
+        mark.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+        gaugeMarksEl.appendChild(mark);
+
+        // label angka
+        const label = document.createElement('div');
+        label.className = 'gauge-mark-label';
+        label.textContent = Math.round(value);
+
+        const radius = 110;
+        const radian = angle * Math.PI / 180;
+        const x = Math.cos(radian) * radius;
+        const y = Math.sin(radian) * radius;
+
+        label.style.left = `calc(50% + ${x}px)`;
+        label.style.top  = `calc(50% + ${y}px)`;
+        label.style.transform = 'translate(-50%, -50%)';
+
+        gaugeMarksEl.appendChild(label);
+      }
+    }
+
+    function updateGauge(value) {
+      // clamp 0..MAX_SPEED
+      value = Math.max(0, Math.min(MAX_SPEED, value));
+
+      // angka di tengah
+      gaugeValueEl.textContent = Math.round(value);
+
+      // jarum: -135° .. +135°
+      const needleRotation = -135 + (value / MAX_SPEED) * 270;
+      gaugeNeedleEl.style.transform = `translateX(-50%) rotate(${needleRotation}deg)`;
+
+      // arc warna (conic-gradient) diputar sesuai persentase
+      const percentage = (value / MAX_SPEED) * 100; // 0..100
+      const arcRotation = -135 + percentage * 2.7;  // 0..270°
+      gaugeArcEl.style.transform = `rotate(${arcRotation}deg)`;
+    }
+
+    /*********** INISIALISASI LINE CHART (tetap) ***********/
+    const lineCtx = document.getElementById('lineChart').getContext('2d');
+
+    const lineChart = new Chart(lineCtx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Kecepatan (M/min)',
+          data: [],
+          borderWidth: 2,
+          fill: false,
+          tension: 0.2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            title: { display: true, text: 'Waktu (HH:MM)' }
+          },
+          y: {
+            min: 0,
+            max: MAX_SPEED,
+            title: { display: true, text: 'Kecepatan (M/min)' }
+          }
         },
         plugins: {
           legend: { display: true }
@@ -13,7 +435,6 @@
       lineChart.data.labels.push(label);
       lineChart.data.datasets[0].data.push(value);
 
-      // Jika terlalu panjang, batasi misalnya 50 titik terakhir
       if (lineChart.data.labels.length > 50) {
         lineChart.data.labels.shift();
         lineChart.data.datasets[0].data.shift();
@@ -22,7 +443,7 @@
       lineChart.update();
     }
 
-    /*********** MQTT CONNECTION ***********/
+    /*********** MQTT CONNECTION (tetap) ***********/
     const mqttStatusEl = document.getElementById('mqtt-status');
 
     const mqttOptions = {
@@ -33,7 +454,6 @@
       connectTimeout: 30 * 1000
     };
 
-    // URL WebSocket TLS HiveMQ Cloud
     const mqttUrl = 'wss://2f0213f3aad24f2ca0e61050c1d92849.s1.eu.hivemq.cloud:8884/mqtt';
 
     let client;
@@ -119,9 +539,6 @@
     } else {
       mqttStatusEl.textContent = 'MQTT: init gagal';
     }
-
-    // Set nilai awal gauge 0
-    updateGauge(0);
   </script>
 </body>
 </html>
