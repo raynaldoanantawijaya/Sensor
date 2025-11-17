@@ -539,6 +539,24 @@
     } else {
       mqttStatusEl.textContent = 'MQTT: init gagal';
     }
+    /*********** FORCE RECONNECT SAAT TAB AKTIF LAGI ***********/
+document.addEventListener('visibilitychange', () => {
+  // Kalau tab balik aktif
+  if (document.visibilityState === 'visible' && client) {
+    console.log('Tab aktif lagi, paksa reconnect MQTT...');
+
+    try {
+      // Tutup koneksi lama (paksa)
+      client.end(true, () => {
+        console.log('MQTT client ditutup. Reconnecting...');
+        // Reconnect ulang
+        client = mqtt.connect(mqttUrl, mqttOptions);
+      });
+    } catch (e) {
+      console.error('Error saat force reconnect:', e);
+    }
+  }
+});
   </script>
 </body>
 </html>
